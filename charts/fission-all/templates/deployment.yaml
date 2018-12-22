@@ -573,7 +573,12 @@ spec:
         args: [
           "--cluster_id", "{{ .Values.nats.clusterID }}",
           "--auth", "{{ .Values.nats.authToken }}",
-          "--max_channels", "0"
+          "--max_channels", "0",
+          "--max_subs", "0",
+          "--max_msgs", "0",
+          "--max_bytes", "0",
+          "--max_age", "86400s",
+          "--max_inactivity", "3600s",
         ]
 
         ports:
