@@ -84,8 +84,9 @@ persistence:
   ##   GKE, AWS & OpenStack)
   ##
   # storageClass: "-"
+  storageClass: "nfs-client84"
   accessMode: ReadWriteOnce
-  size: 8Gi
+  size: 40Gi
 
 ## Analytics let us count how many people installed fission. Set to
 ## false to disable analytics.
