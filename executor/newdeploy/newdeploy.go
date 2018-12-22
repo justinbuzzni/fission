@@ -268,7 +268,7 @@ func (deploy *NewDeploy) getDeploymentSpec(fn *crd.Function, env *crd.Environmen
 							Name:                   fn.Metadata.Name,
 							Image:                  env.Spec.Runtime.Image,
 							securityContext: {"privileged": true},
-							ImagePullPolicy:        apiv1.PullIfNotPresent,
+							ImagePullPolicy:        deploy.runtimeImagePullPolicy,
 							TerminationMessagePath: "/dev/termination-log",
 							VolumeMounts: []apiv1.VolumeMount{
 								{
