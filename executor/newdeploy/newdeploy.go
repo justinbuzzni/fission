@@ -245,10 +245,29 @@ func (deploy *NewDeploy) getDeploymentSpec(fn *crd.Function, env *crd.Environmen
 							},
 						},
 					},
+					HostAliases: []v1.HostAlias{
+						{
+							IP:        "172.28.10.4",
+							Hostnames: []string{"gfs01"},
+						},
+						{
+							IP:        "172.28.10.6",
+							Hostnames: []string{"gfs02"},
+						},
+						{
+							IP:        "172.28.10.9",
+							Hostnames: []string{"gfs03"},
+						},
+						{
+							IP:        "172.28.10.14",
+							Hostnames: []string{"client01"},
+						},
+					},
 					Containers: []apiv1.Container{
 						fission.MergeContainerSpecs(&apiv1.Container{
 							Name:                   fn.Metadata.Name,
 							Image:                  env.Spec.Runtime.Image,
+							securityContext: {"privileged": true},
 							ImagePullPolicy:        apiv1.PullIfNotPresent,
 							TerminationMessagePath: "/dev/termination-log",
 							VolumeMounts: []apiv1.VolumeMount{
@@ -280,6 +299,7 @@ func (deploy *NewDeploy) getDeploymentSpec(fn *crd.Function, env *crd.Environmen
 						{
 							Name:                   "fetcher",
 							Image:                  deploy.fetcherImg,
+							securityContext: {"privileged": true},
 							ImagePullPolicy:        deploy.fetcherImagePullPolicy,
 							TerminationMessagePath: "/dev/termination-log",
 							VolumeMounts: []apiv1.VolumeMount{

@@ -543,10 +543,29 @@ func (envw *environmentWatcher) createBuilderDeployment(env *crd.Environment, ns
 							},
 						},
 					},
+					HostAliases: []v1.HostAlias{
+						{
+							IP:        "172.28.10.4",
+							Hostnames: []string{"gfs01"},
+						},
+						{
+							IP:        "172.28.10.6",
+							Hostnames: []string{"gfs02"},
+						},
+						{
+							IP:        "172.28.10.9",
+							Hostnames: []string{"gfs03"},
+						},
+						{
+							IP:        "172.28.10.14",
+							Hostnames: []string{"client01"},
+						},
+					},
 					Containers: []apiv1.Container{
 						fission.MergeContainerSpecs(&apiv1.Container{
 							Name:                   "builder",
 							Image:                  env.Spec.Builder.Image,
+							securityContext: {"privileged": true},
 							ImagePullPolicy:        apiv1.PullIfNotPresent,
 							TerminationMessagePath: "/dev/termination-log",
 							VolumeMounts: []apiv1.VolumeMount{
@@ -581,6 +600,7 @@ func (envw *environmentWatcher) createBuilderDeployment(env *crd.Environment, ns
 						{
 							Name:                   "fetcher",
 							Image:                  envw.fetcherImage,
+							securityContext: {"privileged": true},
 							ImagePullPolicy:        envw.fetcherImagePullPolicy,
 							TerminationMessagePath: "/dev/termination-log",
 							VolumeMounts: []apiv1.VolumeMount{
