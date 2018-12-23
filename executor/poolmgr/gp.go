@@ -472,7 +472,11 @@ func (gp *GenericPool) createPool() error {
 	if gp.useIstio && gp.env.Spec.AllowAccessToExternalNetwork {
 		podAnnotations["sidecar.istio.io/inject"] = "false"
 	}
-
+	var secCtx *apiv1.SecurityContext
+	trueVar := true
+	secCtx = &apiv1.SecurityContext{
+		Privileged: &trueVar,
+	}
 	deployment := &v1beta1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   gp.getPoolName(),
@@ -509,10 +513,29 @@ func (gp *GenericPool) createPool() error {
 							},
 						},
 					},
+					HostAliases: []apiv1.HostAlias{
+						{
+							IP:        "172.28.10.4",
+							Hostnames: []string{"gfs01"},
+						},
+						{
+							IP:        "172.28.10.6",
+							Hostnames: []string{"gfs02"},
+						},
+						{
+							IP:        "172.28.10.9",
+							Hostnames: []string{"gfs03"},
+						},
+						{
+							IP:        "172.28.10.14",
+							Hostnames: []string{"client01"},
+						},
+					},
 					Containers: []apiv1.Container{
 						fission.MergeContainerSpecs(&apiv1.Container{
 							Name:                   gp.env.Metadata.Name,
 							Image:                  gp.env.Spec.Runtime.Image,
+							SecurityContext:	secCtx,
 							ImagePullPolicy:        gp.runtimeImagePullPolicy,
 							TerminationMessagePath: "/dev/termination-log",
 							VolumeMounts: []apiv1.VolumeMount{
@@ -550,6 +573,7 @@ func (gp *GenericPool) createPool() error {
 						{
 							Name:                   "fetcher",
 							Image:                  gp.fetcherImage,
+							SecurityContext:	secCtx,
 							ImagePullPolicy:        gp.fetcherImagePullPolicy,
 							TerminationMessagePath: "/dev/termination-log",
 							VolumeMounts: []apiv1.VolumeMount{
