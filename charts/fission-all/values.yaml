@@ -13,7 +13,8 @@ routerServiceType: LoadBalancer
 repository: index.docker.io
 
 ## Fission image repository
-image: fission/fission-bundle
+#image: fission/fission-bundle
+image: namsangboy/fission-bundle
 
 ## Image pull policy
 pullPolicy: IfNotPresent
@@ -60,7 +61,7 @@ logger:
 ### NATS Streaming, enabled by default
 nats:
   enabled: true
-  authToken: "defaultFissionAuthToken"
+  authToken: "zhlwjrgksroqkfghksrud"
   clusterID: "fissionMQTrigger"
 
 ## Azure-storage-queue: enable and configure the details
