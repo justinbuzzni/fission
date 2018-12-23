@@ -20,7 +20,7 @@ image: namsangboy/fission-bundle
 pullPolicy: IfNotPresent
 
 ## Fission image version
-imageTag: 1.0-rc1
+imageTag: 1.0-rc12
 
 ## Fission fetcher repository
 fetcherImage: fission/fetcher
