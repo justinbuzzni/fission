@@ -495,7 +495,11 @@ func (envw *environmentWatcher) createBuilderDeployment(env *crd.Environment, ns
 	if envw.useIstio && env.Spec.AllowAccessToExternalNetwork {
 		podAnnotations["sidecar.istio.io/inject"] = "false"
 	}
-
+	var secCtx *apiv1.SecurityContext
+	trueVar := true
+	secCtx = &apiv1.SecurityContext{
+		Privileged: &trueVar,
+	}
 	deployment := &v1beta1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: ns,
@@ -533,7 +537,7 @@ func (envw *environmentWatcher) createBuilderDeployment(env *crd.Environment, ns
 							},
 						},
 					},
-					HostAliases: []v1.HostAlias{
+					HostAliases: []apiv1.HostAlias{
 						{
 							IP:        "172.28.10.4",
 							Hostnames: []string{"gfs01"},
@@ -555,7 +559,7 @@ func (envw *environmentWatcher) createBuilderDeployment(env *crd.Environment, ns
 						fission.MergeContainerSpecs(&apiv1.Container{
 							Name:                   "builder",
 							Image:                  env.Spec.Builder.Image,
-							securityContext: {"privileged": true},
+							SecurityContext:	secCtx,
 							ImagePullPolicy:        envw.builderImagePullPolicy,
 							TerminationMessagePath: "/dev/termination-log",
 							VolumeMounts: []apiv1.VolumeMount{
@@ -590,7 +594,7 @@ func (envw *environmentWatcher) createBuilderDeployment(env *crd.Environment, ns
 						{
 							Name:                   "fetcher",
 							Image:                  envw.fetcherImage,
-							securityContext: {"privileged": true},
+							SecurityContext:	secCtx,
 							ImagePullPolicy:        envw.fetcherImagePullPolicy,
 							TerminationMessagePath: "/dev/termination-log",
 							VolumeMounts: []apiv1.VolumeMount{

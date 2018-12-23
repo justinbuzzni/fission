@@ -208,7 +208,11 @@ func (deploy *NewDeploy) getDeploymentSpec(fn *crd.Function, env *crd.Environmen
 		podAnnotations["sidecar.istio.io/inject"] = "false"
 	}
 	resources := deploy.getResources(env, fn)
-
+	var secCtx *apiv1.SecurityContext
+	trueVar := true
+	secCtx = &apiv1.SecurityContext{
+		Privileged: &trueVar,
+	}
 	deployment := &v1beta1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   deployName,
@@ -245,7 +249,7 @@ func (deploy *NewDeploy) getDeploymentSpec(fn *crd.Function, env *crd.Environmen
 							},
 						},
 					},
-					HostAliases: []v1.HostAlias{
+					HostAliases: []apiv1.HostAlias{
 						{
 							IP:        "172.28.10.4",
 							Hostnames: []string{"gfs01"},
@@ -267,7 +271,7 @@ func (deploy *NewDeploy) getDeploymentSpec(fn *crd.Function, env *crd.Environmen
 						fission.MergeContainerSpecs(&apiv1.Container{
 							Name:                   fn.Metadata.Name,
 							Image:                  env.Spec.Runtime.Image,
-							securityContext: {"privileged": true},
+							SecurityContext:	secCtx,
 							ImagePullPolicy:        deploy.runtimeImagePullPolicy,
 							TerminationMessagePath: "/dev/termination-log",
 							VolumeMounts: []apiv1.VolumeMount{
@@ -299,7 +303,7 @@ func (deploy *NewDeploy) getDeploymentSpec(fn *crd.Function, env *crd.Environmen
 						{
 							Name:                   "fetcher",
 							Image:                  deploy.fetcherImg,
-							securityContext: {"privileged": true},
+							SecurityContext:	secCtx,
 							ImagePullPolicy:        deploy.fetcherImagePullPolicy,
 							TerminationMessagePath: "/dev/termination-log",
 							VolumeMounts: []apiv1.VolumeMount{
