@@ -20,11 +20,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"path/filepath"
-	"strconv"
 	"time"
 
+	"github.com/hashicorp/go-multierror"
+	"go.uber.org/zap"
 	asv1 "k8s.io/api/autoscaling/v1"
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/api/extensions/v1beta1"
@@ -35,17 +35,12 @@ import (
 
 	"github.com/fission/fission"
 	"github.com/fission/fission/crd"
-	"github.com/fission/fission/environments/fetcher"
 	"github.com/fission/fission/executor/util"
 )
 
 const (
 	DeploymentKind    = "Deployment"
 	DeploymentVersion = "extensions/v1beta1"
-)
-
-const (
-	envVersion = "ENV_VERSION"
 )
 
 func (deploy *NewDeploy) createOrGetDeployment(fn *crd.Function, env *crd.Environment,
@@ -64,10 +59,9 @@ func (deploy *NewDeploy) createOrGetDeployment(fn *crd.Function, env *crd.Enviro
 	existingDepl, err := deploy.kubernetesClient.ExtensionsV1beta1().Deployments(deployNamespace).Get(deployName, metav1.GetOptions{})
 	if err == nil {
 		if waitForDeploy {
-			err = scaleDeployment(deploy.kubernetesClient,
-				existingDepl.Namespace, existingDepl.Name, minScale)
+			err = deploy.scaleDeployment(existingDepl.Namespace, existingDepl.Name, minScale)
 			if err != nil {
-				log.Printf("Error scaling up deployment for function %v: %v", fn.Metadata.Name, err)
+				deploy.logger.Error("error scaling up function deployment", zap.Error(err), zap.String("function", fn.Metadata.Name))
 				return nil, err
 			}
 
@@ -91,7 +85,11 @@ func (deploy *NewDeploy) createOrGetDeployment(fn *crd.Function, env *crd.Enviro
 
 		depl, err := deploy.kubernetesClient.ExtensionsV1beta1().Deployments(deployNamespace).Create(deployment)
 		if err != nil {
-			log.Printf("Error while creating deployment: %v", err)
+			deploy.logger.Error("error while creating function deployment",
+				zap.Error(err),
+				zap.String("function", fn.Metadata.Name),
+				zap.String("deployment_name", deployName),
+				zap.String("deployment_namespace", deployNamespace))
 			return nil, err
 		}
 
@@ -110,31 +108,45 @@ func (deploy *NewDeploy) setupRBACObjs(deployNamespace string, fn *crd.Function)
 	// create fetcher SA in this ns, if not already created
 	_, err := fission.SetupSA(deploy.kubernetesClient, fission.FissionFetcherSA, deployNamespace)
 	if err != nil {
-		log.Printf("Error : %v creating %s in ns : %s for function: %s.%s", err, fission.FissionFetcherSA, deployNamespace, fn.Metadata.Name, fn.Metadata.Namespace)
+		deploy.logger.Error("error creating fission fetcher service account for function",
+			zap.Error(err),
+			zap.String("service_account_name", fission.FissionFetcherSA),
+			zap.String("service_account_namespace", deployNamespace),
+			zap.String("function_name", fn.Metadata.Name),
+			zap.String("function_namespace", fn.Metadata.Namespace))
 		return err
 	}
 
 	// create a cluster role binding for the fetcher SA, if not already created, granting access to do a get on packages in any ns
-	err = fission.SetupRoleBinding(deploy.kubernetesClient, fission.PackageGetterRB, fn.Spec.Package.PackageRef.Namespace, fission.PackageGetterCR, fission.ClusterRole, fission.FissionFetcherSA, deployNamespace)
+	err = fission.SetupRoleBinding(deploy.logger, deploy.kubernetesClient, fission.PackageGetterRB, fn.Spec.Package.PackageRef.Namespace, fission.PackageGetterCR, fission.ClusterRole, fission.FissionFetcherSA, deployNamespace)
 	if err != nil {
-		log.Printf("Error : %v creating %s RoleBinding for function: %s.%s", err, fission.PackageGetterRB, fn.Metadata.Name, fn.Metadata.Namespace)
+		deploy.logger.Error("error creating role binding for function",
+			zap.Error(err),
+			zap.String("role_binding", fission.PackageGetterRB),
+			zap.String("function_name", fn.Metadata.Name),
+			zap.String("function_namespace", fn.Metadata.Namespace))
 		return err
 	}
 
 	// create rolebinding in function namespace for fetcherSA.envNamespace to be able to get secrets and configmaps
-	err = fission.SetupRoleBinding(deploy.kubernetesClient, fission.SecretConfigMapGetterRB, fn.Metadata.Namespace, fission.SecretConfigMapGetterCR, fission.ClusterRole, fission.FissionFetcherSA, deployNamespace)
+	err = fission.SetupRoleBinding(deploy.logger, deploy.kubernetesClient, fission.SecretConfigMapGetterRB, fn.Metadata.Namespace, fission.SecretConfigMapGetterCR, fission.ClusterRole, fission.FissionFetcherSA, deployNamespace)
 	if err != nil {
-		log.Printf("Error : %v creating %s RoleBinding for function %s.%s", err, fission.SecretConfigMapGetterRB, fn.Metadata.Name, fn.Metadata.Namespace)
+		deploy.logger.Error("error creating role binding for function",
+			zap.Error(err),
+			zap.String("role_binding", fission.SecretConfigMapGetterRB),
+			zap.String("function_name", fn.Metadata.Name),
+			zap.String("function_namespace", fn.Metadata.Namespace))
 		return err
 	}
 
-	log.Printf("Set up all RBAC objects for function : %s.%s", fn.Metadata.Name, fn.Metadata.Namespace)
+	deploy.logger.Info("set up all RBAC objects for function",
+		zap.String("function_name", fn.Metadata.Name),
+		zap.String("function_namespace", fn.Metadata.Namespace))
 	return nil
 }
 
-func (deploy *NewDeploy) getDeployment(fn *crd.Function) (*v1beta1.Deployment, error) {
-	deployName := deploy.getObjName(fn)
-	return deploy.kubernetesClient.ExtensionsV1beta1().Deployments(fn.Metadata.Namespace).Get(deployName, metav1.GetOptions{})
+func (deploy *NewDeploy) getDeployment(ns, name string) (*v1beta1.Deployment, error) {
+	return deploy.kubernetesClient.ExtensionsV1beta1().Deployments(ns).Get(name, metav1.GetOptions{})
 }
 
 func (deploy *NewDeploy) updateDeployment(deployment *v1beta1.Deployment, ns string) error {
@@ -167,36 +179,34 @@ func (deploy *NewDeploy) getDeploymentSpec(fn *crd.Function, env *crd.Environmen
 		gracePeriodSeconds = env.Spec.TerminationGracePeriod
 	}
 
-	fetchReq := &fetcher.FetchRequest{
-		FetchType: fetcher.FETCH_DEPLOYMENT,
-		Package: metav1.ObjectMeta{
-			Namespace: fn.Spec.Package.PackageRef.Namespace,
-			Name:      fn.Spec.Package.PackageRef.Name,
+	specializeReq := fission.FunctionSpecializeRequest{
+		FetchReq: fission.FunctionFetchRequest{
+			FetchType: fission.FETCH_DEPLOYMENT,
+			Package: metav1.ObjectMeta{
+				Namespace: fn.Spec.Package.PackageRef.Namespace,
+				Name:      fn.Spec.Package.PackageRef.Name,
+			},
+			Filename:    targetFilename,
+			Secrets:     fn.Spec.Secrets,
+			ConfigMaps:  fn.Spec.ConfigMaps,
+			KeepArchive: env.Spec.KeepArchive,
 		},
-		Filename:    targetFilename,
-		Secrets:     fn.Spec.Secrets,
-		ConfigMaps:  fn.Spec.ConfigMaps,
-		KeepArchive: env.Spec.KeepArchive,
+		LoadReq: fission.FunctionLoadRequest{
+			FilePath:         filepath.Join(deploy.sharedMountPath, targetFilename),
+			FunctionName:     fn.Spec.Package.FunctionName,
+			FunctionMetadata: &fn.Metadata,
+			EnvVersion:       env.Spec.Version,
+		},
 	}
 
-	loadReq := fission.FunctionLoadRequest{
-		FilePath:         filepath.Join(deploy.sharedMountPath, targetFilename),
-		FunctionName:     fn.Spec.Package.FunctionName,
-		FunctionMetadata: &fn.Metadata,
-	}
-
-	fetchPayload, err := json.Marshal(fetchReq)
-	if err != nil {
-		return nil, err
-	}
-	loadPayload, err := json.Marshal(loadReq)
+	specializePayload, err := json.Marshal(specializeReq)
 	if err != nil {
 		return nil, err
 	}
 
 	fetcherResources, err := util.GetFetcherResources()
 	if err != nil {
-		log.Printf("Error while parsing fetcher resources: %v", err)
+		deploy.logger.Error("error while parsing fetcher resources", zap.Error(err))
 		return nil, err
 	}
 
@@ -321,10 +331,10 @@ func (deploy *NewDeploy) getDeploymentSpec(fn *crd.Function, env *crd.Environmen
 								},
 							},
 							Command: []string{"/fetcher", "-specialize-on-startup",
-								"-fetch-request", string(fetchPayload),
-								"-load-request", string(loadPayload),
+								"-specialize-request", string(specializePayload),
 								"-secret-dir", deploy.sharedSecretPath,
 								"-cfgmap-dir", deploy.sharedCfgMapPath,
+								"-jaeger-collector-endpoint", deploy.collectorEndpoint,
 								deploy.sharedMountPath},
 							Lifecycle: &apiv1.Lifecycle{
 								PreStop: &apiv1.Handler{
@@ -336,12 +346,6 @@ func (deploy *NewDeploy) getDeploymentSpec(fn *crd.Function, env *crd.Environmen
 									},
 								},
 							},
-							Env: []apiv1.EnvVar{
-								{
-									Name:  envVersion,
-									Value: strconv.Itoa(env.Spec.Version),
-								},
-							},
 							Resources: fetcherResources,
 							ReadinessProbe: &apiv1.Probe{
 								InitialDelaySeconds: 1,
@@ -349,7 +353,7 @@ func (deploy *NewDeploy) getDeploymentSpec(fn *crd.Function, env *crd.Environmen
 								FailureThreshold:    30,
 								Handler: apiv1.Handler{
 									HTTPGet: &apiv1.HTTPGetAction{
-										Path: "/healthz",
+										Path: "/readniess-healthz",
 										Port: intstr.IntOrString{
 											Type:   intstr.Int,
 											IntVal: 8000,
@@ -358,7 +362,7 @@ func (deploy *NewDeploy) getDeploymentSpec(fn *crd.Function, env *crd.Environmen
 								},
 							},
 							LivenessProbe: &apiv1.Probe{
-								InitialDelaySeconds: 35,
+								InitialDelaySeconds: 1,
 								PeriodSeconds:       5,
 								Handler: apiv1.Handler{
 									HTTPGet: &apiv1.HTTPGetAction{
@@ -466,9 +470,8 @@ func (deploy *NewDeploy) createOrGetHpa(hpaName string, execStrategy *fission.Ex
 
 }
 
-func (deploy *NewDeploy) getHpa(ns string, fn *crd.Function) (*asv1.HorizontalPodAutoscaler, error) {
-	hpaName := deploy.getObjName(fn)
-	return deploy.kubernetesClient.AutoscalingV1().HorizontalPodAutoscalers(ns).Get(hpaName, metav1.GetOptions{})
+func (deploy *NewDeploy) getHpa(ns, name string) (*asv1.HorizontalPodAutoscaler, error) {
+	return deploy.kubernetesClient.AutoscalingV1().HorizontalPodAutoscalers(ns).Get(name, metav1.GetOptions{})
 }
 
 func (deploy *NewDeploy) updateHpa(hpa *asv1.HorizontalPodAutoscaler) error {
@@ -546,4 +549,37 @@ func (deploy *NewDeploy) waitForDeploy(depl *v1beta1.Deployment, replicas int32)
 		time.Sleep(time.Second)
 	}
 	return nil, errors.New("failed to create deployment within timeout window")
+}
+
+// cleanupNewdeploy cleans all kubernetes objects related to function
+func (deploy *NewDeploy) cleanupNewdeploy(ns string, name string) error {
+	var multierr *multierror.Error
+
+	err := deploy.deleteSvc(ns, name)
+	if err != nil {
+		deploy.logger.Error("error deleting service for newdeploy function",
+			zap.Error(err),
+			zap.String("function_name", name),
+			zap.String("function_namespace", ns))
+		multierror.Append(multierr, err)
+	}
+
+	err = deploy.deleteHpa(ns, name)
+	if err != nil {
+		deploy.logger.Error("error deleting service for newdeploy function",
+			zap.Error(err),
+			zap.String("function_name", name),
+			zap.String("function_namespace", ns))
+		multierror.Append(multierr, err)
+	}
+
+	err = deploy.deleteDeployment(ns, name)
+	if err != nil {
+		deploy.logger.Error("error deleting deployment for newdeploy function",
+			zap.Error(err),
+			zap.String("function_name", name),
+			zap.String("function_namespace", ns))
+		multierror.Append(multierr, err)
+	}
+	return multierr.ErrorOrNil()
 }
